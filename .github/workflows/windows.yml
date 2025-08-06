@@ -1,0 +1,73 @@
+name: Windows Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: 代码迁出
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 构建Java环境
+        uses: actions/setup-java@v4
+        with:
+          distribution: "zulu"
+          java-version: "17"
+
+      - name: 检查缓存
+        uses: actions/cache@v4
+        id: cache-flutter
+        with:
+          path: C:\flutter
+          key: ${{ runner.os }}-flutter-${{ hashFiles('**/pubspec.lock') }}
+
+      - name: 安装Flutter
+        if: steps.cache-flutter.outputs.cache-hit != 'true'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version-file: pubspec.yaml
+
+      - name: 启用Windows桌面支持
+        run: flutter config --enable-windows-desktop
+
+      - name: 下载项目依赖
+        run: flutter pub get
+
+      - name: 更新版本号
+        run: |
+          $version_name = (Select-String -Path pubspec.yaml -Pattern "version:").Line.Split("+")[0].Split(":")[1].Trim()
+          $short_hash = (git rev-parse --short HEAD)
+          $commit_count = (git rev-list --count HEAD)
+          $new_version = "version: $version_name-$short_hash+$commit_count"
+          (Get-Content pubspec.yaml) -replace "version: .*", $new_version | Set-Content pubspec.yaml
+
+      - name: 执行构建脚本
+        run: |
+          PowerShell -ExecutionPolicy Bypass -File "lib/scripts/build.ps1"
+
+      - name: 构建Windows应用
+        run: flutter build windows --release
+
+      - name: 打包Windows应用
+        run: |
+          New-Item -ItemType Directory -Force -Path "release"
+          Copy-Item -Path "build\windows\x64\runner\Release\*" -Destination "release\" -Recurse
+          Compress-Archive -Path "release\*" -DestinationPath "windows-app.zip"
+
+      - name: 上传Windows应用
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-app
+          path: windows-app.zip
+
+      - name: 上传原始构建文件
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build-raw
+          path: build/windows/x64/runner/Release/
